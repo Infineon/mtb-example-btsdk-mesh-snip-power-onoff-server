@@ -55,7 +55,6 @@ extern wiced_bt_cfg_settings_t wiced_bt_cfg_settings;
  ******************************************************/
 #define MESH_PID                0x301A
 #define MESH_VID                0x0002
-#define MESH_CACHE_REPLAY_SIZE  0x0008
 
 #define TRANSITION_INTERVAL     100     // receive status notifications every 100ms during transition to new state
 
@@ -70,7 +69,10 @@ static void mesh_app_init(wiced_bool_t is_provisioned);
 static uint32_t mesh_app_proc_rx_cmd(uint16_t opcode, uint8_t *p_data, uint32_t length);
 static void mesh_power_onoff_server_message_handler(uint8_t element_idx, uint16_t event, void *p_data);
 static void mesh_onoff_process_status(uint8_t element_idx, wiced_bt_mesh_onoff_status_data_t *p_status);
-static void mesh_onoff_hci_event_send_set(wiced_bt_mesh_hci_event_t *p_hci_event, wiced_bt_mesh_onoff_set_data_t *p_data);
+
+#ifdef HCI_CONTROL
+static void mesh_onoff_hci_event_send_status(uint8_t element_idx, wiced_bt_mesh_onoff_status_data_t*p_data);
+#endif
 
 /******************************************************
  *          Variables Definitions
@@ -112,7 +114,6 @@ wiced_bt_mesh_core_config_t  mesh_config =
     .company_id         = MESH_COMPANY_ID_CYPRESS,                  // Company identifier assigned by the Bluetooth SIG
     .product_id         = MESH_PID,                                 // Vendor-assigned product identifier
     .vendor_id          = MESH_VID,                                 // Vendor-assigned product version identifier
-    .replay_cache_size  = MESH_CACHE_REPLAY_SIZE,                   // Number of replay protection entries, i.e. maximum number of mesh devices that can send application messages to this device.
 #if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
     .features           = WICED_BT_MESH_CORE_FEATURE_BIT_LOW_POWER, // A bit field indicating the device features. In Low Power mode no Relay, no Proxy and no Friend
     .friend_cfg         =                                           // Empty Configuration of the Friend Feature
@@ -218,14 +219,7 @@ void mesh_power_onoff_server_message_handler(uint8_t element_idx, uint16_t event
     switch (event)
     {
     case WICED_BT_MESH_ONOFF_STATUS:
-#if defined HCI_CONTROL
-//        if ((p_hci_event = wiced_bt_mesh_create_hci_event(p_event)) != NULL)
-//            mesh_onoff_hci_event_send_set(p_hci_event, (wiced_bt_mesh_onoff_set_data_t *)p_data);
-#endif
         mesh_onoff_process_status(element_idx, (wiced_bt_mesh_onoff_status_data_t *)p_data);
-        break;
-
-    case WICED_BT_MESH_ONOFF_SET:
         break;
 
     default:
@@ -263,6 +257,10 @@ uint32_t mesh_app_proc_rx_cmd(uint16_t opcode, uint8_t *p_data, uint32_t length)
 void mesh_onoff_process_status(uint8_t element_idx, wiced_bt_mesh_onoff_status_data_t *p_status)
 {
     WICED_BT_TRACE("onoff srv set onoff: present:%d target:%d remaining:%d\n", p_status->present_onoff, p_status->target_onoff, p_status->remaining_time);
+
+#if defined HCI_CONTROL
+    mesh_onoff_hci_event_send_status(element_idx, p_status);
+#endif
 }
 
 /*
@@ -275,17 +273,21 @@ void mesh_onoff_server_send_status(uint8_t element_idx, uint8_t onoff)
 
 #ifdef HCI_CONTROL
 /*
- * Send OnOff Set event over transport
+ * Send OnOff Status event over transport
  */
-void mesh_onoff_hci_event_send_set(wiced_bt_mesh_hci_event_t *p_hci_event, wiced_bt_mesh_onoff_set_data_t *p_data)
+void mesh_onoff_hci_event_send_status(uint8_t element_idx, wiced_bt_mesh_onoff_status_data_t* p_data)
+{
+    wiced_bt_mesh_hci_event_t* p_hci_event = wiced_bt_mesh_alloc_hci_event(element_idx);
+    if (p_hci_event)
 {
     uint8_t *p = p_hci_event->data;
 
-    UINT8_TO_STREAM(p, p_data->onoff);
-    UINT32_TO_STREAM(p, p_data->transition_time);
-    UINT16_TO_STREAM(p, p_data->delay);
+        UINT8_TO_STREAM(p, p_data->present_onoff);
+        UINT8_TO_STREAM(p, p_data->target_onoff);
+        UINT32_TO_STREAM(p, p_data->remaining_time);
 
-    mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_ONOFF_SET, (uint8_t *)p_hci_event, (uint16_t)(p - (uint8_t *)p_hci_event));
+        mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_ONOFF_STATUS, (uint8_t*)p_hci_event, (uint16_t)(p - (uint8_t*)p_hci_event));
+    }
 }
 
 #endif
